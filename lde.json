@@ -1,0 +1,10 @@
+{
+	"name": "fs",
+	"version": "0.1.0",
+	"dependencies": {},
+	"devDependencies": {
+		"lde-test": { "git": "https://github.com/lde-org/lde" },
+		"env": { "git": "https://github.com/lde-org/env" },
+		"path": { "git": "https://github.com/lde-org/path" }
+	}
+}
