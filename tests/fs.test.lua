@@ -198,6 +198,55 @@ test.it("rmlink removes a symlink", function()
 	test.falsy(fs.exists(link))
 end)
 
+test.it("dangling directory link reports as missing", function()
+	-- Directory links are junctions on Windows and symlinks on POSIX; both
+	-- are reparse points whose target can disappear underneath them.
+	local target = tmp("dangling-dir-target")
+	local link   = tmp("dangling-dir-link")
+	fs.rmdir(target)
+	fs.rmdir(link)
+	fs.mkdir(target)
+	fs.write(path.join(target, "f.txt"), "x")
+	test.truthy(fs.mklink(target, link))
+
+	-- A valid link resolves through to its target.
+	test.truthy(fs.exists(link))
+	test.truthy(fs.isdir(link))
+	test.truthy(fs.stat(link))
+
+	-- Wipe the target so the link dangles. GetFileAttributesA reports the link
+	-- itself without following, which used to make a dangling junction look
+	-- like a valid directory; exists/isdir/stat must see the missing target
+	-- (regression: installIsIntact treated a wiped dep as still installed).
+	fs.rmdir(target)
+	test.truthy(fs.islink(link)) -- the link itself is still there
+	test.falsy(fs.exists(link))
+	test.falsy(fs.isdir(link))
+	test.falsy(fs.stat(link))
+	test.falsy(fs.isfile(link))
+
+	fs.rmlink(link)
+end)
+
+test.skipIf(jit.os == "Windows")("dangling file symlink reports as missing", function()
+	-- Windows file links fall back to hard links without Developer Mode, which
+	-- keep the data alive instead of dangling, so this is POSIX-only.
+	local target = tmp("dangling-file-target")
+	local link   = tmp("dangling-file-link")
+	fs.write(target, "x")
+	test.truthy(fs.mklink(target, link))
+	test.truthy(fs.exists(link))
+	test.truthy(fs.isfile(link))
+
+	os.remove(target)
+	test.truthy(fs.islink(link))
+	test.falsy(fs.exists(link))
+	test.falsy(fs.isfile(link))
+	test.falsy(fs.stat(link))
+
+	fs.rmlink(link)
+end)
+
 --
 -- scan
 --

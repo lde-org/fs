@@ -167,15 +167,40 @@ local function getFileAttrs(p)
 	return attrs
 end
 
+local GENERIC_WRITE = 0x40000000
+local OPEN_EXISTING = 3
+local FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+local FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+local FSCTL_SET_REPARSE_POINT = 0x000900A4
+local IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
+
+--- Get a path's attributes, following reparse points (junctions/symlinks).
+--- GetFileAttributesA reports the link itself without following, so a dangling
+--- link would look like a valid entry; opening through the link (without
+--- FILE_FLAG_OPEN_REPARSE_POINT) fails when its target is gone. This matches
+--- the POSIX stat()-based semantics the other backends expose.
+---@param p string
+---@return number? attrs # nil when the path (or a link's target) is missing
+local function getResolvedAttrs(p)
+	local attrs = getFileAttrs(p)
+	if attrs == nil then return nil end
+	if bit.band(attrs, FILE_ATTRIBUTE_REPARSE_POINT) ~= 0 then
+		local h = kernel32.CreateFileA(p, 0, 0x7, nil, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nil)
+		if h == INVALID_HANDLE_VALUE then return nil end
+		kernel32.CloseHandle(h)
+	end
+	return attrs
+end
+
 ---@param p string
 ---@return boolean
 function fs.exists(p)
-	return getFileAttrs(p) ~= nil
+	return getResolvedAttrs(p) ~= nil
 end
 
 ---@param p string
 function fs.isdir(p)
-	local attrs = getFileAttrs(p)
+	local attrs = getResolvedAttrs(p)
 	if attrs == nil then
 		return false
 	end
@@ -187,13 +212,6 @@ end
 function fs.mkdir(p)
 	return kernel32.CreateDirectoryA(p, nil) ~= 0
 end
-
-local GENERIC_WRITE = 0x40000000
-local OPEN_EXISTING = 3
-local FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
-local FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
-local FSCTL_SET_REPARSE_POINT = 0x000900A4
-local IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
 
 --- Resolves a path to an absolute path using Win32 GetFullPathNameA.
 ---@param p string
@@ -348,12 +366,12 @@ end
 
 ---@param p string
 function fs.isfile(p)
-	local attrs = getFileAttrs(p)
+	local attrs = getResolvedAttrs(p)
 	if attrs == nil then
 		return false
 	end
 
-	return bit.band(attrs, FILE_ATTRIBUTE_DIRECTORY) == 0 and bit.band(attrs, FILE_ATTRIBUTE_REPARSE_POINT) == 0
+	return bit.band(attrs, FILE_ATTRIBUTE_DIRECTORY) == 0
 end
 
 -- FILETIME is 100ns intervals since 1601-01-01. Unix epoch is 1970-01-01.
@@ -409,6 +427,10 @@ end
 ---@param p string
 ---@return fs.Stat?
 function fs.stat(p)
+	-- Follow reparse points so a dangling junction/symlink reports as missing.
+	if getResolvedAttrs(p) == nil then
+		return nil
+	end
 	local data = newFileAttrData()
 	if kernel32.GetFileAttributesExA(p, 0, data) == 0 then
 		return nil
