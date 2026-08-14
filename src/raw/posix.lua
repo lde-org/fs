@@ -133,6 +133,11 @@ return function(rawToCrossStat)
 	end
 
 	---@param p string
+	function fs.removeFile(p)
+		return os.remove(p) ~= nil
+	end
+
+	---@param p string
 	---@param mode number
 	function fs.chmod(p, mode)
 		return ffi.C.chmod(p, mode) == 0

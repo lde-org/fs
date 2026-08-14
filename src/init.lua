@@ -52,6 +52,15 @@ for k, v in pairs(rawfs) do
 	fs[k] = v
 end
 
+--- Deletes a file, clearing the read-only attribute first on Windows
+--- (git marks files read-only there, and DeleteFileA refuses them).
+---@param p string
+---@return boolean
+local function removeFile(p)
+	local rm = rawfs.removeFile
+	return (rm and rm(p)) or (os.remove(p) ~= nil)
+end
+
 ---@param p string
 ---@return string|nil
 function fs.read(p)
@@ -125,7 +134,10 @@ end
 
 ---@param p string
 function fs.delete(p)
-	return os.remove(p) ~= nil
+	if fs.islink(p) then
+		return fs.rmlink(p)
+	end
+	return removeFile(p)
 end
 
 --- Recursively removes a directory and all its contents.
@@ -150,7 +162,7 @@ function fs.rmdir(dir)
 		elseif entry.type == "dir" then
 			fs.rmdir(full)
 		else
-			os.remove(full)
+			removeFile(full)
 		end
 	end
 

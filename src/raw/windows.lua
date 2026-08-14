@@ -76,6 +76,7 @@ ffi.cdef([[
 
 	BOOL RemoveDirectoryA(const char* lpPathName);
 	BOOL DeleteFileA(const char* lpFileName);
+	BOOL SetFileAttributesA(const char* lpFileName, DWORD dwFileAttributes);
 	BOOL CreateHardLinkA(const char* lpFileName, const char* lpExistingFileName, void* lpSecurityAttributes);
 
 	HANDLE CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
@@ -98,6 +99,7 @@ local kernel32 = ffi.load("kernel32")
 
 local INVALID_HANDLE_VALUE = ffi.cast("HANDLE", -1)
 local INVALID_FILE_ATTRIBUTES = 0xFFFFFFFF
+local FILE_ATTRIBUTE_READONLY = 0x1
 local FILE_ATTRIBUTE_DIRECTORY = 0x10
 local FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
@@ -165,6 +167,19 @@ local function getFileAttrs(p)
 		return nil
 	end
 	return attrs
+end
+
+--- Deletes a file, clearing the read-only attribute first if set.
+--- DeleteFileA refuses read-only files, and git marks files read-only
+--- inside .git on Windows.
+---@param p string
+---@return boolean
+function fs.removeFile(p)
+	local attrs = getFileAttrs(p)
+	if attrs ~= nil and bit.band(attrs, FILE_ATTRIBUTE_READONLY) ~= 0 then
+		kernel32.SetFileAttributesA(p, bit.band(attrs, bit.bnot(FILE_ATTRIBUTE_READONLY)))
+	end
+	return kernel32.DeleteFileA(p) ~= 0
 end
 
 local GENERIC_WRITE = 0x40000000
