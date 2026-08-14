@@ -87,8 +87,7 @@ function fs.copy(src, dest)
 	if fs.isfile(src) then
 		local content = fs.read(src)
 		if not content then return false end
-		fs.write(dest, content)
-		return true
+		return fs.write(dest, content)
 	end
 
 	local iter = fs.readdir(src)
