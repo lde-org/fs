@@ -76,6 +76,8 @@ ffi.cdef([[
 
 	BOOL RemoveDirectoryA(const char* lpPathName);
 	BOOL DeleteFileA(const char* lpFileName);
+	BOOL MoveFileExA(const char* lpExistingFileName, const char* lpNewFileName, DWORD dwFlags);
+	DWORD GetLastError(void);
 	BOOL SetFileAttributesA(const char* lpFileName, DWORD dwFileAttributes);
 	BOOL CreateHardLinkA(const char* lpFileName, const char* lpExistingFileName, void* lpSecurityAttributes);
 	BOOL CopyFileA(const char* lpExistingFileName, const char* lpNewFileName, BOOL bFailIfExists);
@@ -190,6 +192,23 @@ end
 ---@return boolean
 function fs.copyFile(src, dest)
 	return kernel32.CopyFileA(src, dest, 0) ~= 0
+end
+
+local MOVEFILE_REPLACE_EXISTING = 0x1
+local MOVEFILE_COPY_ALLOWED = 0x2
+
+--- Move a file or directory. MoveFileExA replaces existing files and handles
+--- cross-volume moves natively (copy + delete in one kernel call), so there
+--- is no cross-device fallback needed on Windows.
+---@param old string
+---@param new string
+---@return boolean
+---@return string? err
+function fs.moveFile(old, new)
+	if kernel32.MoveFileExA(old, new, MOVEFILE_REPLACE_EXISTING + MOVEFILE_COPY_ALLOWED) ~= 0 then
+		return true
+	end
+	return false, "failed to move: error " .. tostring(kernel32.GetLastError())
 end
 
 local GENERIC_WRITE = 0x40000000

@@ -169,15 +169,32 @@ end
 ---@param old string
 ---@param new string
 function fs.move(old, new)
-	-- Fast path: os.rename works for both files and dirs on same device
-	if os.rename(old, new) then
-		return true
+	-- Native rename first: same-device moves are one syscall for files and
+	-- dirs alike (on Windows, MoveFileExA also handles cross-volume natively).
+	local ok, err = rawfs.moveFile(old, new)
+	if ok then return true end
+
+	-- An actual error occurred
+	if err ~= "exdev" then
+		return false, err
 	end
 
-	-- Fallback to copy+delete for cross-device moves
-	if not fs.copy(old, new) then return false, "Failed to copy" end
-	local ok = fs.isdir(old) and fs.rmdir(old) or fs.delete(old)
-	if not ok then return false, "Failed to delete" end
+	-- Fall back to methods to avoid cross device move limitations
+	local copied
+	if fs.isfile(old) then
+		copied = fs.copyAtomic(old, new)
+	else
+		copied = fs.copy(old, new)
+	end
+
+	if not copied then
+		return false, "Failed to copy"
+	end
+
+	local delOk = fs.isdir(old) and fs.rmdir(old) or fs.delete(old)
+	if not delOk then
+		return false, "Failed to delete"
+	end
 
 	return true
 end

@@ -25,6 +25,8 @@ ffi.cdef([[
 	int close(int fd);
 	int fchmod(int fd, unsigned int mode);
 	int futimens(int fd, const struct timespec times[2]);
+	int rename(const char* oldpath, const char* newpath);
+	const char* strerror(int errnum);
 ]])
 
 ---@type table<number, fs.DirEntry.Type>
@@ -239,6 +241,22 @@ return function(rawToCrossStat, dataCopier)
 		ffi.C.close(inFd)
 		ffi.C.close(outFd)
 		return ok
+	end
+
+
+	--- Move a file or directory with rename.
+	--- Fails on cross-device moves.
+	---@param old string
+	---@param new string
+	---@return boolean
+	---@return string? err
+	function fs.moveFile(old, new)
+		if ffi.C.rename(old, new) == 0 then return true end
+
+		local errno = ffi.errno()
+		if errno == 18 then return false, "exdev" end
+
+		return false, "failed to move: " .. ffi.string(ffi.C.strerror(errno))
 	end
 
 	return fs
