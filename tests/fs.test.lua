@@ -613,6 +613,29 @@ test.it("copy overwrites an existing destination file", function()
 	test.equal(fs.read(dst), "new")
 end)
 
+test.it("copy copies large binary content exactly", function()
+	local src = tmp("copy-binary-src.bin")
+	local dst = tmp("copy-binary-dst.bin")
+	-- 256KB spanning null bytes, larger than the internal copy buffer
+	local chunks = {}
+	for i = 1, 4096 do
+		chunks[i] = string.char(i % 256) .. "\0\255\1" .. string.rep("x", 60)
+	end
+	local content = table.concat(chunks)
+	fs.write(src, content)
+	test.truthy(fs.copy(src, dst))
+	test.equal(fs.read(dst), content)
+end)
+
+test.skipIf(jit.os == "Windows")("copy preserves the source file mode", function()
+	local src = tmp("copy-mode-src.txt")
+	local dst = tmp("copy-mode-dst.txt")
+	fs.write(src, "x")
+	test.truthy(fs.chmod(src, 0x180)) -- 0600
+	test.truthy(fs.copy(src, dst))
+	test.equal(fs.stat(dst).mode, 0x180)
+end)
+
 --
 -- move edge cases
 --

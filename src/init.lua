@@ -32,6 +32,7 @@ local path = require("path")
 ---@field rmlink fun(p: string): boolean
 ---@field stat fun(p: string): fs.Stat?
 ---@field lstat fun(p: string): fs.Stat?
+---@field copyFile fun(src: string, dest: string): boolean
 ---@field watch fun(p: string, callback: fun(event: fs.WatchEvent, name: string), opts: { recursive: boolean? }?): fs.Watcher?
 
 local rawfs ---@type fs.raw
@@ -92,11 +93,10 @@ end
 
 ---@param src string
 ---@param dest string
+---@return boolean
 function fs.copy(src, dest)
 	if fs.isfile(src) then
-		local content = fs.read(src)
-		if not content then return false end
-		return fs.write(dest, content)
+		return rawfs.copyFile(src, dest)
 	end
 
 	local iter = fs.readdir(src)

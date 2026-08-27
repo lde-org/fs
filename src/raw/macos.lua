@@ -125,6 +125,26 @@ local fs           = require("fs.raw.posix")(function(s, modeToStatType)
 	}
 end)
 
+ffi.cdef([[
+	int clonefile(const char* src, const char* dst, int flags);
+]])
+
+local posixCopyFile = fs.copyFile
+
+--- Copy a file with clonefile(2): an instant copy-on-write clone on APFS
+--- that shares data blocks with the source until either is modified.
+--- clonefile refuses to replace an existing destination and only works on
+--- APFS, so fall back to the POSIX read/write copy in both cases.
+---@param src string
+---@param dest string
+---@return boolean
+function fs.copyFile(src, dest)
+	if ffi.C.clonefile(src, dest, 0) == 0 then
+		return true
+	end
+	return posixCopyFile(src, dest)
+end
+
 ---@alias fs.WatchEvent "create" | "modify" | "delete" | "rename"
 
 ---@class fs.Watcher

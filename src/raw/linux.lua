@@ -83,6 +83,36 @@ local F_GETFL = 3
 local F_SETFL = 4
 local O_NONBLOCK = 0x800
 
+ffi.cdef([[
+	long copy_file_range(int fd_in, long* off_in, int fd_out, long* off_out, unsigned long len, unsigned int flags);
+]])
+
+local EINTR = 4
+local MAX_COPY_CHUNK = 0x7FFFF000
+
+--- Copy data with copy_file_range(2): an in-kernel copy that avoids
+--- user-space buffering entirely. Falls back (via the caller) to a
+--- read/write loop when the filesystem refuses; a partial copy is safe
+--- because the loop continues from the current file offsets.
+---@param in_fd number
+---@param out_fd number
+---@param size number
+---@return boolean
+local function copyViaCfr(in_fd, out_fd, size)
+	local copied = 0
+	while true do
+		local n = ffi.C.copy_file_range(in_fd, nil, out_fd, nil, MAX_COPY_CHUNK, 0)
+		if n > 0 then
+			copied = copied + n
+			if size >= 0 and copied >= size then return true end
+		elseif n == 0 then
+			return size < 0 or copied >= size
+		else
+			if ffi.errno() ~= EINTR then return false end
+		end
+	end
+end
+
 ---@class fs.raw.linux: fs.raw.posix
 local fs            = require("fs.raw.posix")(function(s, modeToStatType)
 	return {
@@ -92,7 +122,7 @@ local fs            = require("fs.raw.posix")(function(s, modeToStatType)
 		type = modeToStatType[bit.band(s.st_mode, 0xF000)],
 		mode = bit.band(s.st_mode, 0x1FF)
 	}
-end)
+end, copyViaCfr)
 
 ---@alias fs.WatchEvent "create" | "modify" | "delete" | "rename"
 

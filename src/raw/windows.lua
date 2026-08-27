@@ -78,6 +78,7 @@ ffi.cdef([[
 	BOOL DeleteFileA(const char* lpFileName);
 	BOOL SetFileAttributesA(const char* lpFileName, DWORD dwFileAttributes);
 	BOOL CreateHardLinkA(const char* lpFileName, const char* lpExistingFileName, void* lpSecurityAttributes);
+	BOOL CopyFileA(const char* lpExistingFileName, const char* lpNewFileName, BOOL bFailIfExists);
 
 	HANDLE CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
 	                              uintptr_t CompletionKey, DWORD NumberOfConcurrentThreads);
@@ -180,6 +181,15 @@ function fs.removeFile(p)
 		kernel32.SetFileAttributesA(p, bit.band(attrs, bit.bnot(FILE_ATTRIBUTE_READONLY)))
 	end
 	return kernel32.DeleteFileA(p) ~= 0
+end
+
+--- Copy a file with CopyFileA, the kernel-mode copy used by the shell.
+--- Overwrites an existing destination (bFailIfExists = FALSE).
+---@param src string
+---@param dest string
+---@return boolean
+function fs.copyFile(src, dest)
+	return kernel32.CopyFileA(src, dest, 0) ~= 0
 end
 
 local GENERIC_WRITE = 0x40000000
