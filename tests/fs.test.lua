@@ -637,6 +637,55 @@ test.skipIf(jit.os == "Windows")("copy preserves the source file mode", function
 end)
 
 --
+-- copyAtomic
+--
+
+test.it("copyAtomic copies a file", function()
+	local src = tmp("atomic-src.txt")
+	local dst = tmp("atomic-dst.txt")
+	fs.write(src, "atomic!")
+	test.truthy(fs.copyAtomic(src, dst))
+	test.equal(fs.read(dst), "atomic!")
+end)
+
+test.it("copyAtomic overwrites an existing destination file", function()
+	local src = tmp("atomic-over-src.txt")
+	local dst = tmp("atomic-over-dst.txt")
+	fs.write(src, "new")
+	fs.write(dst, "old")
+	test.truthy(fs.copyAtomic(src, dst))
+	test.equal(fs.read(dst), "new")
+end)
+
+test.it("copyAtomic returns false for a missing source", function()
+	test.falsy(fs.copyAtomic(tmp("atomic-no-src.txt"), tmp("atomic-no-dst.txt")))
+end)
+
+test.it("copyAtomic returns false for a directory source", function()
+	local src = tmp("atomic-dir-src")
+	fs.mkdir(src)
+	test.falsy(fs.copyAtomic(src, tmp("atomic-dir-dst")))
+end)
+
+test.it("copyAtomic leaves no temp files behind", function()
+	local d = tmp("atomic-clean")
+	fs.mkdir(d)
+	local src = path.join(d, "src.txt")
+	local dst = path.join(d, "dst.txt")
+	fs.write(src, "data")
+	test.truthy(fs.copyAtomic(src, dst))
+	test.falsy(fs.copyAtomic(tmp("atomic-missing-src"), path.join(d, "gone.txt")))
+	local names = {}
+	for entry in fs.readdir(d) do
+		names[#names + 1] = entry.name
+	end
+	table.sort(names)
+	test.equal(#names, 2)
+	test.equal(names[1], "dst.txt")
+	test.equal(names[2], "src.txt")
+end)
+
+--
 -- move edge cases
 --
 

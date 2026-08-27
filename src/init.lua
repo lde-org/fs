@@ -116,6 +116,56 @@ function fs.copy(src, dest)
 	return true
 end
 
+--- Copy a single file atomically: write to a temp file beside the
+--- destination, then rename over it. Unlike fs.copy, an existing destination
+--- is never truncated underneath a process that has it open/dlopen'd (mmap'd)
+--- — the old inode stays valid until the rename swaps it, so a live mapping
+--- is never corrupted by the replacement. Slightly more expensive (an extra
+--- rename) and replaces a symlinked destination instead of writing through
+--- it, so it's opt-in for callers replacing files that may be in use (native
+--- build outputs), not the default copy. On POSIX the swap is fully atomic;
+--- on Windows rename cannot replace an existing file, so the destination is
+--- removed first (a brief window where it is absent, but never partial).
+---@param src string
+---@param dest string
+---@return boolean
+local tmpCounter = 0
+
+--- Returns a temp path next to dest that does not exist yet.
+---@param dest string
+---@return string
+local function tempCopyPath(dest)
+	while true do
+		tmpCounter = tmpCounter + 1
+		local p = dest .. ".lde-copy-tmp-" .. tostring(os.time()) .. "-" .. tostring(tmpCounter)
+		if not fs.exists(p) then return p end
+	end
+end
+
+--- Safely copies a file from src to dest without leaving any partial reads
+---@param src string
+---@param dest string
+function fs.copyAtomic(src, dest)
+	if not fs.isfile(src) then return false end
+
+	local tmp = tempCopyPath(dest)
+	if not rawfs.copyFile(src, tmp) then
+		fs.delete(tmp) -- remove any partial temp file
+		return false
+	end
+
+	if os.rename(tmp, dest) then
+		return true
+	end
+
+	if jit.os == "Windows" and fs.delete(dest) and os.rename(tmp, dest) then
+		return true
+	end
+
+	fs.delete(tmp)
+	return false
+end
+
 ---@param old string
 ---@param new string
 function fs.move(old, new)
