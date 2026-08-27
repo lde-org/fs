@@ -225,7 +225,13 @@ return function(rawToCrossStat, dataCopier)
 			return false
 		end
 
-		local ok = dataCopier and dataCopier(inFd, outFd, st.size or -1)
+		-- Pcall dataCopier which might be missing or throw an error when it is an ffi symbol that may or may not be defined (ie, old kernel has no copy_file_range)
+		local ok
+		if dataCopier then
+			local success, result = pcall(dataCopier, inFd, outFd, st.size or -1)
+			ok = success and result
+		end
+
 		if not ok then
 			ok = manualCopy(inFd, outFd)
 		end
