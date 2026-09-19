@@ -44,11 +44,11 @@ local modeToStatType = {
 	[0xA000] = "symlink"
 }
 
--- open(2) flags differ between Linux and macOS.
+-- open(2) flags differ between Linux and the BSDs (macOS included).
 local O_RDONLY = 0
 local O_WRONLY = 0x0001
 local O_CREAT, O_TRUNC
-if jit.os == "OSX" then
+if jit.os == "OSX" or jit.os == "BSD" then
 	O_CREAT = 0x0200
 	O_TRUNC = 0x0400
 else

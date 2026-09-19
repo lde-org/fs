@@ -2,9 +2,9 @@
 	"name": "fs",
 	"description": "A cross platform fs library for lde.",
 	"authors": ["David Cruz <david@bycruz.dev>"],
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"dependencies": {
-		"path": { "git": "https://github.com/lde-org/path" }
+		"path": { "version": "^0.1.0" }
 	},
 	"devDependencies": {
 		"lde-test": { "git": "https://github.com/lde-org/lde" },
