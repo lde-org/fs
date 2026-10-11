@@ -252,10 +252,39 @@ function fs.globToPattern(glob)
 	return "^" .. pattern .. "$"
 end
 
+--- The literal characters a glob ends with, which every path it matches has to end with too. A
+--- walk asks this of a name before it asks the pattern: a tree holds far more files than a glob
+--- matches — a C source tree under a built package, most of all — and a suffix comparison is a
+--- fraction of a pattern match.
+---@param glob string
+---@return string? suffix "" when the glob ends in a wildcard
+function fs.globSuffix(glob)
+	local start = #glob
+	while start > 0 do
+		local char = glob:sub(start, start)
+		if char == "*" or char == "?" then break end
+		start = start - 1
+	end
+
+	local suffix = glob:sub(start + 1):match("[^/\\]*$")
+	if suffix == nil or suffix == "" then
+		return nil
+	end
+
+	return suffix
+end
+
+--- Walks a directory tree and yields the paths matching a glob, in the order a recursive read
+--- would meet them.
+---
+--- Nothing under a directory is read before the paths before it were handed back, so a caller that
+--- stops early stops the walk: scanning a tree costs what is yielded, not what is under it.
+--- `ignore` is asked about every name before it is read or walked into — a build output, a version
+--- control directory, and a link back into a package are most of a tree's file count.
 ---@param cwd string
 ---@param glob string
----@param opts { absolute: boolean, followSymlinks: boolean }?
----@return string[]
+---@param opts { absolute: boolean, followSymlinks: boolean, ignore: fun(name: string): boolean? }?
+---@return fun(): string? path
 function fs.scan(cwd, glob, opts)
 	if not fs.isdir(cwd) then
 		error("not a directory: '" .. cwd .. "'")
@@ -263,48 +292,58 @@ function fs.scan(cwd, glob, opts)
 
 	local absolute = opts and opts.absolute or false
 	local followSymlinks = opts and opts.followSymlinks or false
+	local ignore = opts and opts.ignore
 
 	local pattern = fs.globToPattern(glob)
-	local entries = {}
+	local suffix = fs.globSuffix(glob)
+	-- One frame per directory being read, so the walk is the recursion it replaces: a directory's
+	-- entries are finished before the one after it is opened, and nothing is left to unwind.
+	local stack = { { path = cwd, iter = fs.readdir(cwd) } }
 
-	local function dir(p)
-		local dirIter = fs.readdir(p)
-		if not dirIter then
-			return
-		end
+	return function()
+		while true do
+			local frame = stack[#stack]
+			if not frame then return nil end
+			local entry = frame.iter and frame.iter()
+			if not entry then
+				stack[#stack] = nil
+			else
+				local name = entry.name
+				local entryType = entry.type
+				-- What a file is named decides most of the walk: a name the glob cannot end with
+				-- is not a path it can match, and the whole of the match is left unasked. Only a
+				-- file is settled by its name — a link is walked into, whatever it is called.
+				local candidate = entryType ~= "file" or suffix == nil or name:sub(-#suffix) == suffix
 
-		for entry in dirIter do
-			local entryPath = p .. sep .. entry.name
-			local entryType = entry.type
+				if candidate then
+					local entryPath = frame.path .. sep .. name
 
-			-- d_type can be DT_UNKNOWN on some filesystems; fall back to lstat
-			if entryType == "unknown" then
-				local s = fs.lstat(entryPath)
-				entryType = s and s.type or "unknown"
-			end
+					-- d_type can be DT_UNKNOWN on some filesystems; fall back to lstat
+					if entryType == "unknown" then
+						local s = fs.lstat(entryPath)
+						entryType = s and s.type or "unknown"
+					end
 
-			-- Resolve symlinks when followSymlinks is set
-			if entryType == "symlink" and followSymlinks then
-				local s = fs.stat(entryPath)
-				entryType = s and s.type or "unknown"
-			end
+					-- Resolve symlinks when followSymlinks is set
+					if entryType == "symlink" and followSymlinks then
+						local s = fs.stat(entryPath)
+						entryType = s and s.type or "unknown"
+					end
 
-			if entryType == "dir" then
-				dir(entryPath)
-			elseif entryType == "file" then
-				if string.find(entryPath, pattern) then
-					if absolute then
-						entries[#entries + 1] = entryPath
-					else
-						entries[#entries + 1] = path.relative(cwd, entryPath)
+					if not (ignore and ignore(name)) then
+						if entryType == "dir" then
+							local inner = fs.readdir(entryPath)
+							if inner then
+								stack[#stack + 1] = { path = entryPath, iter = inner }
+							end
+						elseif entryType == "file" and string.find(entryPath, pattern) then
+							return absolute and entryPath or path.relative(cwd, entryPath)
+						end
 					end
 				end
 			end
 		end
 	end
-
-	dir(cwd)
-	return entries
 end
 
 ---@param dir string

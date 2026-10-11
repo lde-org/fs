@@ -251,6 +251,14 @@ end)
 -- scan
 --
 
+---@param ... any passed to fs.scan
+---@return string[]
+local function scan(...)
+	local found = {}
+	for p in fs.scan(...) do found[#found + 1] = p end
+	return found
+end
+
 test.it("scan finds files matching glob", function()
 	local d = tmp("scan-test")
 	fs.mkdir(d)
@@ -259,7 +267,7 @@ test.it("scan finds files matching glob", function()
 	fs.write(path.join(d, "b.txt"), "")
 	fs.write(path.join(d, "sub", "c.lua"), "")
 
-	local results = fs.scan(d, "**.lua")
+	local results = scan(d, "**.lua")
 	test.equal(#results, 2)
 end)
 
@@ -754,19 +762,57 @@ end)
 -- scan edge cases
 --
 
-test.it("scan returns empty table when no files match", function()
+test.it("scan yields nothing when no files match", function()
 	local d = tmp("scan-nomatch")
 	fs.mkdir(d)
 	fs.write(path.join(d, "a.txt"), "")
-	local results = fs.scan(d, "**.lua")
-	test.equal(#results, 0)
+	test.equal(#scan(d, "**.lua"), 0)
+end)
+
+test.it("scan yields nothing and ends for an empty directory", function()
+	local d = tmp("scan-empty")
+	fs.mkdir(d)
+	local nextPath = fs.scan(d, "**")
+	test.equal(nextPath(), nil)
+end)
+
+test.it("scan does not walk past where a caller stopped", function()
+	local d = tmp("scan-lazy")
+	fs.mkdir(d)
+	fs.write(path.join(d, "a.lua"), "")
+	fs.write(path.join(d, "b.lua"), "")
+	local seen = 0
+	for _ in fs.scan(d, "**.lua", { ignore = function() seen = seen + 1 return false end }) do
+		break
+	end
+	test.equal(seen, 1, "only the first entry may be read before a caller stops")
+end)
+
+test.it("scan matches a glob that names a directory", function()
+	local d = tmp("scan-dirglob")
+	fs.mkdir(d)
+	fs.mkdir(path.join(d, "sub"))
+	fs.write(path.join(d, "sub", "lde.json"), "")
+	fs.write(path.join(d, "lde.json"), "")
+	test.equal(#scan(d, "**/lde.json"), 2)
+end)
+
+test.it("scan does not descend into a name the ignore predicate refuses", function()
+	local d = tmp("scan-ignore")
+	fs.mkdir(d)
+	fs.mkdir(path.join(d, "target"))
+	fs.write(path.join(d, "a.lua"), "")
+	fs.write(path.join(d, "target", "b.lua"), "")
+	local results = scan(d, "**.lua", { ignore = function(name) return name == "target" end })
+	test.equal(#results, 1)
+	test.equal(results[1], "a.lua")
 end)
 
 test.it("scan with absolute option returns absolute paths", function()
 	local d = tmp("scan-absolute")
 	fs.mkdir(d)
 	fs.write(path.join(d, "x.lua"), "")
-	local results = fs.scan(d, "**.lua", { absolute = true })
+	local results = scan(d, "**.lua", { absolute = true })
 	test.equal(#results, 1)
 	-- absolute path must start with the base dir
 	test.truthy(results[1]:sub(1, #d) == d)
@@ -780,8 +826,18 @@ test.it("scan finds files in nested directories with ** glob", function()
 	fs.write(path.join(d, "root.lua"), "")
 	fs.write(path.join(d, "a", "mid.lua"), "")
 	fs.write(path.join(d, "a", "b", "deep.lua"), "")
-	local results = fs.scan(d, "**.lua")
+	local results = scan(d, "**.lua")
 	test.equal(#results, 3)
+end)
+
+test.it("scan follows a symlinked directory when asked", function()
+	local d = tmp("scan-link")
+	fs.mkdir(d)
+	fs.mkdir(path.join(d, "real"))
+	fs.write(path.join(d, "real", "a.lua"), "")
+	fs.mklink(path.join(d, "real"), path.join(d, "link"))
+	test.equal(#scan(d, "**.lua"), 1, "a link is not walked into by default")
+	test.equal(#scan(d, "**.lua", { followSymlinks = true }), 2)
 end)
 
 test.it("scan errors on a non-directory path", function()
