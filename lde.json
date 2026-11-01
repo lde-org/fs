@@ -2,9 +2,16 @@
 	"name": "fs",
 	"description": "A cross platform fs library for lde.",
 	"authors": ["David Cruz <david@bycruz.dev>"],
-	"version": "0.3.0",
+	"version": "0.3.1",
 	"dependencies": {
 		"path": { "version": "^0.1.0" }
+	},
+	"features": {
+		"windows": ["fs.raw.windows"],
+		"linux": ["fs.raw.linux", "fs.raw.posix"],
+		"macos": ["fs.raw.posix", "fs.raw.kqueue", "fs.raw.macos"],
+		"bsd": ["fs.raw.posix", "fs.raw.kqueue", "fs.raw.bsd"],
+		"unix": ["fs.raw.posix"]
 	},
 	"devDependencies": {
 		"lde-test": { "git": "https://github.com/lde-org/lde" },
