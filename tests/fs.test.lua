@@ -158,7 +158,10 @@ test.it("readdir iterates directory entries", function()
 	fs.write(path.join(d, "two.txt"), "")
 
 	local names = {}
-	for entry in fs.readdir(d) do
+	local iter = assert(fs.readdir(d))
+	while true do
+		local entry = iter()
+		if not entry then break end
 		names[#names + 1] = entry.name
 	end
 	table.sort(names)
@@ -251,11 +254,13 @@ end)
 -- scan
 --
 
----@param ... any passed to fs.scan
----@return string[]
-local function scan(...)
+---@param cwd string
+---@param glob string
+---@param opts? { absolute: boolean?, followSymlinks: boolean?, ignore: (fun(name: string): boolean?)? }
+local function scan(cwd, glob, opts)
+	---@type string[]
 	local found = {}
-	for p in fs.scan(...) do found[#found + 1] = p end
+	for p in fs.scan(cwd, glob, opts) do found[#found + 1] = assert(p) --[[@as string]] end
 	return found
 end
 
@@ -641,7 +646,7 @@ test.skipIf(jit.os == "Windows")("copy preserves the source file mode", function
 	fs.write(src, "x")
 	test.truthy(fs.chmod(src, 0x180)) -- 0600
 	test.truthy(fs.copy(src, dst))
-	test.equal(fs.stat(dst).mode, 0x180)
+	test.equal(assert(fs.stat(dst)).mode, 0x180)
 end)
 
 --
@@ -684,7 +689,10 @@ test.it("copyAtomic leaves no temp files behind", function()
 	test.truthy(fs.copyAtomic(src, dst))
 	test.falsy(fs.copyAtomic(tmp("atomic-missing-src"), path.join(d, "gone.txt")))
 	local names = {}
-	for entry in fs.readdir(d) do
+	local iter = assert(fs.readdir(d))
+	while true do
+		local entry = iter()
+		if not entry then break end
 		names[#names + 1] = entry.name
 	end
 	table.sort(names)
@@ -748,7 +756,10 @@ test.it("readdir reports correct entry types", function()
 	fs.mklink(target, link)
 
 	local types = {}
-	for entry in fs.readdir(d) do
+	local iter = assert(fs.readdir(d))
+	while true do
+		local entry = iter()
+		if not entry then break end
 		types[entry.name] = entry.type
 	end
 

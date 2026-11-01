@@ -312,7 +312,6 @@ local DRAGONFLY_ABI = [[
 --- entry point: a 40-byte event list handed to the 11.0 one would be read
 --- mis-strided, so the release decides which pair to declare.
 ---@param release string? # uname release, such as "10.2" or "11.0_STABLE"
----@return string
 local function netbsdKeventABI(release)
 	local major = tonumber(tostring(release):match("^(%d+)"))
 

@@ -114,7 +114,6 @@ local fs = {}
 function fs.readdir(p)
 	local searchPath = p .. "\\*"
 
-	---@type { cFileName: string, dwFileAttributes: number }
 	local findData = ffi.new("WIN32_FIND_DATAA")
 
 	local handle = kernel32.FindFirstFileA(searchPath, findData)
@@ -163,7 +162,6 @@ function fs.readdir(p)
 end
 
 ---@param p string
----@return number?
 local function getFileAttrs(p)
 	local attrs = kernel32.GetFileAttributesA(p)
 	if attrs == INVALID_FILE_ATTRIBUTES then
@@ -224,7 +222,6 @@ local IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
 --- FILE_FLAG_OPEN_REPARSE_POINT) fails when its target is gone. This matches
 --- the POSIX stat()-based semantics the other backends expose.
 ---@param p string
----@return number? attrs # nil when the path (or a link's target) is missing
 local function getResolvedAttrs(p)
 	local attrs = getFileAttrs(p)
 	if attrs == nil then return nil end
@@ -259,7 +256,6 @@ end
 
 --- Resolves a path to an absolute path using Win32 GetFullPathNameA.
 ---@param p string
----@return string?
 local function getFullPath(p)
 	local buf = ffi.new("char[?]", 1024)
 	local len = kernel32.GetFullPathNameA(p, 1024, buf, nil)
@@ -337,6 +333,7 @@ local function createJunction(src, dest)
 	ffi.cast("uint16_t*", ptr + 16 + targetByteLen + 2)[0] = 0
 
 	-- Open the junction directory with reparse point access
+	---@type HANDLE
 	local handle = kernel32.CreateFileA(
 		dest,
 		GENERIC_WRITE,
@@ -425,7 +422,7 @@ local EPOCH_DIFF = 116444736000000000ULL
 ---@param ft { dwLowDateTime: number, dwHighDateTime: number }
 local function filetimeToUnix(ft)
 	local ticks = ffi.cast("uint64_t", ft.dwHighDateTime) * 0x100000000ULL + ft.dwLowDateTime
-	return tonumber((ticks - EPOCH_DIFF) / 10000000ULL)
+	return assert(tonumber((ticks - EPOCH_DIFF) / 10000000ULL))
 end
 
 ---@param attrs number
@@ -440,23 +437,14 @@ local function attrsToType(attrs)
 	end
 end
 
----@class fs.raw.windows.Stat
----@field dwFileAttributes number
----@field ftLastAccessTime { dwLowDateTime: number, dwHighDateTime: number }
----@field ftLastWriteTime { dwLowDateTime: number, dwHighDateTime: number }
----@field nFileSizeHigh number
----@field nFileSizeLow number
-
----@type fun(): fs.raw.windows.Stat
----@diagnostic disable-next-line: assign-type-mismatch
 local newFileAttrData = ffi.typeof("WIN32_FILE_ATTRIBUTE_DATA")
 
----@param s fs.raw.windows.Stat
+---@param s WIN32_FILE_ATTRIBUTE_DATA
 local function fileSize(s)
-	return tonumber(s.nFileSizeHigh) * 0x100000000 + tonumber(s.nFileSizeLow)
+	return assert(tonumber(s.nFileSizeHigh)) * 0x100000000 + assert(tonumber(s.nFileSizeLow))
 end
 
----@param s fs.raw.windows.Stat
+---@param s WIN32_FILE_ATTRIBUTE_DATA
 ---@param type fs.Stat.Type
 ---@return fs.Stat
 local function rawToCrossStat(s, type)
@@ -534,7 +522,6 @@ ffi.cdef([[
 ]])
 
 local WAIT_OBJECT_0 = 0
-local WAIT_TIMEOUT  = 0x102
 
 --- Watch a directory for changes. Calls callback(event, name) for each change.
 --- Returns a watcher with :poll() (non-blocking), :wait() (blocking), and :close().
@@ -556,7 +543,10 @@ function fs.watch(p, callback, opts)
 	)
 	if handle == INVALID_HANDLE_VALUE then return nil end
 
-	local event = kernel32.CreateEventA(nil, 1, 0, nil) -- manual reset, initially unsignaled
+	---@type fun(a: any, b: number, c: number, d: string?): HANDLE
+	local createEvent = kernel32.CreateEventA
+	---@type HANDLE
+	local event = createEvent(nil, 1, 0, nil) -- manual reset, initially unsignaled
 	if event == nil then
 		kernel32.CloseHandle(handle); return nil
 	end
@@ -575,7 +565,7 @@ function fs.watch(p, callback, opts)
 	)
 
 	local function issueRead()
-		ffi.fill(overlapped, ffi.sizeof("OVERLAPPED_W"))
+		ffi.fill(overlapped, assert(ffi.sizeof("OVERLAPPED_W")))
 		overlapped[0].hEvent = event
 		kernel32.ReadDirectoryChangesW(handle, buf, bufSize, recursive and 1 or 0, notifyFilter, bytesReturned,
 			overlapped, nil)
@@ -628,16 +618,19 @@ function fs.watch(p, callback, opts)
 		issueRead()
 	end
 
+	---@type fun(h: HANDLE, milliseconds: number): number
+	local waitFor = kernel32.WaitForSingleObject
+
 	---@type fs.Watcher
 	local watcher = {}
 
 	function watcher.poll()
-		if kernel32.WaitForSingleObject(event, 0) ~= WAIT_OBJECT_0 then return end
+		if waitFor(event, 0) ~= WAIT_OBJECT_0 then return end
 		drain()
 	end
 
 	function watcher.wait()
-		kernel32.WaitForSingleObject(event, INFINITE)
+		waitFor(event, INFINITE)
 		drain()
 	end
 

@@ -33,6 +33,7 @@ local path = require("path")
 ---@field stat fun(p: string): fs.Stat?
 ---@field lstat fun(p: string): fs.Stat?
 ---@field copyFile fun(src: string, dest: string): boolean
+---@field chmod fun(p: string, mode: number): boolean
 ---@field watch fun(p: string, callback: fun(event: fs.WatchEvent, name: string), opts: { recursive: boolean? }?): fs.Watcher?
 
 local rawfs ---@type fs.raw
@@ -105,7 +106,9 @@ function fs.copy(src, dest)
 	if not iter then return false end
 	if not fs.isdir(dest) and not fs.mkdir(dest) then return false end
 
-	for entry in iter do
+	while true do
+		local entry = iter()
+		if not entry then break end
 		local srcPath = path.join(src, entry.name)
 		local destPath = path.join(dest, entry.name)
 
@@ -135,7 +138,6 @@ local tmpCounter = 0
 
 --- Returns a temp path next to dest that does not exist yet.
 ---@param dest string
----@return string
 local function tempCopyPath(dest)
 	while true do
 		tmpCounter = tmpCounter + 1
@@ -221,10 +223,11 @@ function fs.rmdir(dir)
 		return fs.rmlink(dir)
 	end
 
-	local iter = fs.readdir(dir)
-	if not iter then return false end
+		local iter = fs.readdir(dir)
 
-	for entry in iter do
+	while true do
+		local entry = iter()
+		if not entry then break end
 		local full = path.join(dir, entry.name)
 		if entry.type == "symlink" then
 			fs.rmlink(full)
@@ -283,7 +286,7 @@ end
 --- control directory, and a link back into a package are most of a tree's file count.
 ---@param cwd string
 ---@param glob string
----@param opts { absolute: boolean, followSymlinks: boolean, ignore: fun(name: string): boolean? }?
+---@param opts { absolute: boolean?, followSymlinks: boolean?, ignore: (fun(name: string): boolean?)? }?
 ---@return fun(): string? path
 function fs.scan(cwd, glob, opts)
 	if not fs.isdir(cwd) then

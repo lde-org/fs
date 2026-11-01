@@ -97,7 +97,6 @@ local MAX_COPY_CHUNK = 0x7FFFF000
 ---@param in_fd number
 ---@param out_fd number
 ---@param size number
----@return boolean
 local function copyViaCfr(in_fd, out_fd, size)
 	local copied = 0
 	while true do
@@ -163,7 +162,9 @@ function fs.watch(p, callback, opts)
 		local function walkDirs(dir)
 			local iter = fs.readdir(dir)
 			if not iter then return end
-			for entry in iter do
+			while true do
+				local entry = iter()
+				if not entry then break end
 				if entry.type == "dir" then
 					local sub = dir .. "/" .. entry.name
 					addWatch(sub)

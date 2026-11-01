@@ -4,6 +4,8 @@ ffi.cdef([[
 	int kqueue(void);
 	int kevent(int kq, const struct kevent* changelist, int nchanges,
 	           struct kevent* eventlist, int nevents, const struct timespec* timeout);
+	int open(const char* pathname, int flags, ...);
+	int close(int fd);
 ]])
 
 -- kqueue is shared by macOS and the BSDs, and these values agree on all of them.
@@ -37,6 +39,10 @@ local NOTE_RENAME = 0x00000020
 return function(fs, vnodeFilter, openFlag)
 	--- Watch a path for changes. Calls callback(event, name) for each change.
 	--- Returns a watcher with :poll() (non-blocking), :wait() (blocking), and :close().
+	---@param p string
+	---@param callback fun(event: fs.WatchEvent, name: string)
+	---@param opts { recursive: boolean? }?
+	---@return fs.Watcher?
 	return function(p, callback, opts)
 		local recursive = opts and opts.recursive or false
 
@@ -80,14 +86,23 @@ return function(fs, vnodeFilter, openFlag)
 			end
 		end
 
+		---@param absDir string
+		---@return table<string, boolean>
 		local function snapDir(absDir)
 			local snap = {}
 			local iter = fs.readdir(absDir)
-			if iter then for entry in iter do snap[entry.name] = true end end
+			if iter then
+				while true do
+					local entry = iter()
+					if not entry then break end
+					snap[entry.name] = true
+				end
+			end
 			return snap
 		end
 
 		local function walkDir(absDir, relBase)
+			---@type table<string, boolean>
 			local snap = snapDir(absDir)
 			dirSnaps[absDir] = snap
 			for name in pairs(snap) do
@@ -103,9 +118,11 @@ return function(fs, vnodeFilter, openFlag)
 
 		local prev ---@type table<string, boolean>?
 		if isDir then
-			prev = snapDir(p)
-			dirSnaps[p] = prev
-			for name in pairs(prev) do
+			---@type table<string, boolean>
+			local snapshot = snapDir(p)
+			prev = snapshot
+			dirSnaps[p] = snapshot
+			for name in pairs(snapshot) do
 				local absChild = p .. "/" .. name
 				local childIsDir = fs.isdir(absChild)
 				watchEntry(absChild, name, childIsDir)
@@ -120,7 +137,7 @@ return function(fs, vnodeFilter, openFlag)
 
 		local function process(n)
 			for i = 0, n - 1 do
-				local ident = tonumber(events[i].ident)
+				local ident = assert(tonumber(events[i].ident))
 				local ff    = events[i].fflags
 
 				if ident == tonumber(dirfd) then
