@@ -1,4 +1,5 @@
 local ffi = require("ffi")
+local utf8Windows = require("utf8.raw.windows")
 
 ffi.cdef([[
 	typedef void* HANDLE;
@@ -25,11 +26,6 @@ ffi.cdef([[
 		WCHAR cFileName[260];
 		WCHAR cAlternateFileName[14];
 	} WIN32_FIND_DATAW;
-
-	int MultiByteToWideChar(unsigned int CodePage, DWORD dwFlags, const char* lpMultiByteStr, int cbMultiByte,
-		WCHAR* lpWideCharStr, int cchWideChar);
-	int WideCharToMultiByte(unsigned int CodePage, DWORD dwFlags, const WCHAR* lpWideCharStr, int cchWideChar,
-		char* lpMultiByteStr, int cbMultiByte, const char* lpDefaultChar, BOOL* lpUsedDefaultChar);
 
 	HANDLE FindFirstFileW(const WCHAR* lpFileName, WIN32_FIND_DATAW* lpFindFileData);
 	BOOL FindNextFileW(HANDLE hFindFile, WIN32_FIND_DATAW* lpFindFileData);
@@ -113,31 +109,22 @@ local FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
 -- Paths are UTF-8 on every platform. Windows takes and hands back names as UTF-16 through its wide
 -- calls; the narrow ones read them in the system code page, which spells "Antônio" with the single
--- byte 0xF4 and cannot spell a name outside that code page at all. Every path crosses here.
-local CP_UTF8 = 65001
+-- byte 0xF4 and cannot spell a name outside that code page at all. Every path crosses here, and
+-- utf8.raw.windows is the codec it crosses through.
+local EMPTY_WIDE = ffi.new("WCHAR[1]")
 
 --- A UTF-8 string as the NUL-terminated UTF-16 a wide call takes.
 ---@param s string
 ---@return ffi.cdata*
 local function wide(s)
-	local count = kernel32.MultiByteToWideChar(CP_UTF8, 0, s, #s, nil, 0)
-	local buf = ffi.new("WCHAR[?]", count + 1)
-	if count > 0 then kernel32.MultiByteToWideChar(CP_UTF8, 0, s, #s, buf, count) end
-	return buf
+	return utf8Windows.toWide(s) or EMPTY_WIDE
 end
 
 --- UTF-16 from a wide call as UTF-8. `count` is in UTF-16 units; without it the string ends at NUL.
 ---@param w ffi.cdata*
 ---@param count number?
----@return string
 local function narrow(w, count)
-	count = count or -1
-	local size = kernel32.WideCharToMultiByte(CP_UTF8, 0, w, count, nil, 0, nil, nil)
-	if size <= 0 then return "" end
-	local buf = ffi.new("char[?]", size)
-	kernel32.WideCharToMultiByte(CP_UTF8, 0, w, count, buf, size, nil, nil)
-	-- A NUL-terminated conversion counts the terminator in what it wrote.
-	return ffi.string(buf, count == -1 and size - 1 or size)
+	return utf8Windows.fromWide(w, count) or ""
 end
 
 -- The C runtime opens files by narrow path too -- `io.open`, `os.remove`, `os.rename`, and

@@ -4,7 +4,8 @@
 	"authors": ["David Cruz <david@bycruz.dev>"],
 	"version": "0.3.2",
 	"dependencies": {
-		"path": { "version": "^0.1.0" }
+		"path": { "version": "^0.1.0" },
+		"utf8": { "version": "^0.1.0" }
 	},
 	"features": {
 		"windows": ["fs.raw.windows"],
