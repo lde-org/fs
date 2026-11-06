@@ -22,16 +22,21 @@ ffi.cdef([[
 		DWORD nFileSizeLow;
 		DWORD dwReserved0;
 		DWORD dwReserved1;
-		char cFileName[260];
-		char cAlternateFileName[14];
-	} WIN32_FIND_DATAA;
+		WCHAR cFileName[260];
+		WCHAR cAlternateFileName[14];
+	} WIN32_FIND_DATAW;
 
-	HANDLE FindFirstFileA(const char* lpFileName, WIN32_FIND_DATAA* lpFindFileData);
-	BOOL FindNextFileA(HANDLE hFindFile, WIN32_FIND_DATAA* lpFindFileData);
+	int MultiByteToWideChar(unsigned int CodePage, DWORD dwFlags, const char* lpMultiByteStr, int cbMultiByte,
+		WCHAR* lpWideCharStr, int cchWideChar);
+	int WideCharToMultiByte(unsigned int CodePage, DWORD dwFlags, const WCHAR* lpWideCharStr, int cchWideChar,
+		char* lpMultiByteStr, int cbMultiByte, const char* lpDefaultChar, BOOL* lpUsedDefaultChar);
+
+	HANDLE FindFirstFileW(const WCHAR* lpFileName, WIN32_FIND_DATAW* lpFindFileData);
+	BOOL FindNextFileW(HANDLE hFindFile, WIN32_FIND_DATAW* lpFindFileData);
 	BOOL FindClose(HANDLE hFindFile);
-	BOOL CreateDirectoryA(const char* lpPathName, void* lpSecurityAttributes);
-	BOOL CreateSymbolicLinkA(const char* lpSymlinkFileName, const char* lpTargetFileName, DWORD dwFlags);
-	DWORD GetFileAttributesA(const char* lpFileName);
+	BOOL CreateDirectoryW(const WCHAR* lpPathName, void* lpSecurityAttributes);
+	BOOL CreateSymbolicLinkW(const WCHAR* lpSymlinkFileName, const WCHAR* lpTargetFileName, DWORD dwFlags);
+	DWORD GetFileAttributesW(const WCHAR* lpFileName);
 
 	typedef struct {
 		DWORD dwFileAttributes;
@@ -42,10 +47,10 @@ ffi.cdef([[
 		DWORD nFileSizeLow;
 	} WIN32_FILE_ATTRIBUTE_DATA;
 
-	BOOL GetFileAttributesExA(const char* lpFileName, int fInfoLevelClass, WIN32_FILE_ATTRIBUTE_DATA* lpFileInformation);
+	BOOL GetFileAttributesExW(const WCHAR* lpFileName, int fInfoLevelClass, WIN32_FILE_ATTRIBUTE_DATA* lpFileInformation);
 
-	HANDLE CreateFileA(
-		const char* lpFileName,
+	HANDLE CreateFileW(
+		const WCHAR* lpFileName,
 		DWORD dwDesiredAccess,
 		DWORD dwShareMode,
 		void* lpSecurityAttributes,
@@ -67,20 +72,20 @@ ffi.cdef([[
 
 	BOOL CloseHandle(HANDLE hObject);
 
-	DWORD GetFullPathNameA(
-		const char* lpFileName,
+	DWORD GetFullPathNameW(
+		const WCHAR* lpFileName,
 		DWORD nBufferLength,
-		char* lpBuffer,
-		char** lpFilePart
+		WCHAR* lpBuffer,
+		WCHAR** lpFilePart
 	);
 
-	BOOL RemoveDirectoryA(const char* lpPathName);
-	BOOL DeleteFileA(const char* lpFileName);
-	BOOL MoveFileExA(const char* lpExistingFileName, const char* lpNewFileName, DWORD dwFlags);
+	BOOL RemoveDirectoryW(const WCHAR* lpPathName);
+	BOOL DeleteFileW(const WCHAR* lpFileName);
+	BOOL MoveFileExW(const WCHAR* lpExistingFileName, const WCHAR* lpNewFileName, DWORD dwFlags);
 	DWORD GetLastError(void);
-	BOOL SetFileAttributesA(const char* lpFileName, DWORD dwFileAttributes);
-	BOOL CreateHardLinkA(const char* lpFileName, const char* lpExistingFileName, void* lpSecurityAttributes);
-	BOOL CopyFileA(const char* lpExistingFileName, const char* lpNewFileName, BOOL bFailIfExists);
+	BOOL SetFileAttributesW(const WCHAR* lpFileName, DWORD dwFileAttributes);
+	BOOL CreateHardLinkW(const WCHAR* lpFileName, const WCHAR* lpExistingFileName, void* lpSecurityAttributes);
+	BOOL CopyFileW(const WCHAR* lpExistingFileName, const WCHAR* lpNewFileName, BOOL bFailIfExists);
 
 	HANDLE CreateIoCompletionPort(HANDLE FileHandle, HANDLE ExistingCompletionPort,
 	                              uintptr_t CompletionKey, DWORD NumberOfConcurrentThreads);
@@ -106,6 +111,50 @@ local FILE_ATTRIBUTE_READONLY = 0x1
 local FILE_ATTRIBUTE_DIRECTORY = 0x10
 local FILE_ATTRIBUTE_REPARSE_POINT = 0x400
 
+-- Paths are UTF-8 on every platform. Windows takes and hands back names as UTF-16 through its wide
+-- calls; the narrow ones read them in the system code page, which spells "Antônio" with the single
+-- byte 0xF4 and cannot spell a name outside that code page at all. Every path crosses here.
+local CP_UTF8 = 65001
+
+--- A UTF-8 string as the NUL-terminated UTF-16 a wide call takes.
+---@param s string
+---@return ffi.cdata*
+local function wide(s)
+	local count = kernel32.MultiByteToWideChar(CP_UTF8, 0, s, #s, nil, 0)
+	local buf = ffi.new("WCHAR[?]", count + 1)
+	if count > 0 then kernel32.MultiByteToWideChar(CP_UTF8, 0, s, #s, buf, count) end
+	return buf
+end
+
+--- UTF-16 from a wide call as UTF-8. `count` is in UTF-16 units; without it the string ends at NUL.
+---@param w ffi.cdata*
+---@param count number?
+---@return string
+local function narrow(w, count)
+	count = count or -1
+	local size = kernel32.WideCharToMultiByte(CP_UTF8, 0, w, count, nil, 0, nil, nil)
+	if size <= 0 then return "" end
+	local buf = ffi.new("char[?]", size)
+	kernel32.WideCharToMultiByte(CP_UTF8, 0, w, count, buf, size, nil, nil)
+	-- A NUL-terminated conversion counts the terminator in what it wrote.
+	return ffi.string(buf, count == -1 and size - 1 or size)
+end
+
+-- The C runtime opens files by narrow path too -- `io.open`, `os.remove`, `os.rename`, and
+-- `fopen` in a native module -- and reads that path in the code page its locale names. The
+-- Universal CRT reads it as UTF-8 under a ".UTF8" locale, so the path a directory listing hands
+-- over is the path `io.open` finds. Only the character type category is set: numbers and dates
+-- keep formatting the way they did. A runtime older than the Universal CRT has no UTF-8 locale and
+-- keeps its code page, and there a name outside ASCII cannot be opened through it.
+do
+	local ok, ucrt = pcall(ffi.load, "ucrtbase")
+	if ok then
+		pcall(ffi.cdef, [[ char* setlocale(int category, const char* locale); ]])
+		local LC_CTYPE = 2
+		pcall(function() return ucrt.setlocale(LC_CTYPE, ".UTF8") end)
+	end
+end
+
 ---@class fs.raw.windows: fs.raw
 local fs = {}
 
@@ -114,9 +163,9 @@ local fs = {}
 function fs.readdir(p)
 	local searchPath = p .. "\\*"
 
-	local findData = ffi.new("WIN32_FIND_DATAA")
+	local findData = ffi.new("WIN32_FIND_DATAW")
 
-	local handle = kernel32.FindFirstFileA(searchPath, findData)
+	local handle = kernel32.FindFirstFileW(wide(searchPath), findData)
 	if handle == INVALID_HANDLE_VALUE then
 		return nil
 	end
@@ -130,7 +179,7 @@ function fs.readdir(p)
 				first = false
 				hasNext = true
 			else
-				hasNext = kernel32.FindNextFileA(handle, findData) ~= 0
+				hasNext = kernel32.FindNextFileW(handle, findData) ~= 0
 			end
 
 			if not hasNext then
@@ -138,7 +187,7 @@ function fs.readdir(p)
 				return nil
 			end
 
-			local name = ffi.string(findData.cFileName)
+			local name = narrow(findData.cFileName)
 			if name ~= "." and name ~= ".." then
 				local isDir = bit.band(findData.dwFileAttributes, FILE_ATTRIBUTE_DIRECTORY) ~= 0
 				local isLink = bit.band(findData.dwFileAttributes, FILE_ATTRIBUTE_REPARSE_POINT) ~= 0
@@ -163,7 +212,7 @@ end
 
 ---@param p string
 local function getFileAttrs(p)
-	local attrs = kernel32.GetFileAttributesA(p)
+	local attrs = kernel32.GetFileAttributesW(wide(p))
 	if attrs == INVALID_FILE_ATTRIBUTES then
 		return nil
 	end
@@ -171,31 +220,32 @@ local function getFileAttrs(p)
 end
 
 --- Deletes a file, clearing the read-only attribute first if set.
---- DeleteFileA refuses read-only files, and git marks files read-only
+--- DeleteFileW refuses read-only files, and git marks files read-only
 --- inside .git on Windows.
 ---@param p string
 ---@return boolean
 function fs.removeFile(p)
 	local attrs = getFileAttrs(p)
+	local w = wide(p)
 	if attrs ~= nil and bit.band(attrs, FILE_ATTRIBUTE_READONLY) ~= 0 then
-		kernel32.SetFileAttributesA(p, bit.band(attrs, bit.bnot(FILE_ATTRIBUTE_READONLY)))
+		kernel32.SetFileAttributesW(w, bit.band(attrs, bit.bnot(FILE_ATTRIBUTE_READONLY)))
 	end
-	return kernel32.DeleteFileA(p) ~= 0
+	return kernel32.DeleteFileW(w) ~= 0
 end
 
---- Copy a file with CopyFileA, the kernel-mode copy used by the shell.
+--- Copy a file with CopyFileW, the kernel-mode copy used by the shell.
 --- Overwrites an existing destination (bFailIfExists = FALSE).
 ---@param src string
 ---@param dest string
 ---@return boolean
 function fs.copyFile(src, dest)
-	return kernel32.CopyFileA(src, dest, 0) ~= 0
+	return kernel32.CopyFileW(wide(src), wide(dest), 0) ~= 0
 end
 
 local MOVEFILE_REPLACE_EXISTING = 0x1
 local MOVEFILE_COPY_ALLOWED = 0x2
 
---- Move a file or directory. MoveFileExA replaces existing files and handles
+--- Move a file or directory. MoveFileExW replaces existing files and handles
 --- cross-volume moves natively (copy + delete in one kernel call), so there
 --- is no cross-device fallback needed on Windows.
 ---@param old string
@@ -203,7 +253,7 @@ local MOVEFILE_COPY_ALLOWED = 0x2
 ---@return boolean
 ---@return string? err
 function fs.moveFile(old, new)
-	if kernel32.MoveFileExA(old, new, MOVEFILE_REPLACE_EXISTING + MOVEFILE_COPY_ALLOWED) ~= 0 then
+	if kernel32.MoveFileExW(wide(old), wide(new), MOVEFILE_REPLACE_EXISTING + MOVEFILE_COPY_ALLOWED) ~= 0 then
 		return true
 	end
 	return false, "failed to move: error " .. tostring(kernel32.GetLastError())
@@ -217,7 +267,7 @@ local FSCTL_SET_REPARSE_POINT = 0x000900A4
 local IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003
 
 --- Get a path's attributes, following reparse points (junctions/symlinks).
---- GetFileAttributesA reports the link itself without following, so a dangling
+--- GetFileAttributesW reports the link itself without following, so a dangling
 --- link would look like a valid entry; opening through the link (without
 --- FILE_FLAG_OPEN_REPARSE_POINT) fails when its target is gone. This matches
 --- the POSIX stat()-based semantics the other backends expose.
@@ -226,7 +276,7 @@ local function getResolvedAttrs(p)
 	local attrs = getFileAttrs(p)
 	if attrs == nil then return nil end
 	if bit.band(attrs, FILE_ATTRIBUTE_REPARSE_POINT) ~= 0 then
-		local h = kernel32.CreateFileA(p, 0, 0x7, nil, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nil)
+		local h = kernel32.CreateFileW(wide(p), 0, 0x7, nil, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nil)
 		if h == INVALID_HANDLE_VALUE then return nil end
 		kernel32.CloseHandle(h)
 	end
@@ -251,18 +301,21 @@ end
 
 ---@param p string
 function fs.mkdir(p)
-	return kernel32.CreateDirectoryA(p, nil) ~= 0
+	return kernel32.CreateDirectoryW(wide(p), nil) ~= 0
 end
 
---- Resolves a path to an absolute path using Win32 GetFullPathNameA.
+--- Resolves a path to an absolute path using Win32 GetFullPathNameW: the UTF-16 it returns and
+--- its length in units.
 ---@param p string
+---@return ffi.cdata*? path
+---@return number? length
 local function getFullPath(p)
-	local buf = ffi.new("char[?]", 1024)
-	local len = kernel32.GetFullPathNameA(p, 1024, buf, nil)
+	local buf = ffi.new("WCHAR[?]", 1024)
+	local len = kernel32.GetFullPathNameW(wide(p), 1024, buf, nil)
 	if len == 0 or len >= 1024 then
 		return nil
 	end
-	return ffi.string(buf, len)
+	return buf, len
 end
 
 --- Creates an NTFS junction point (directory only).
@@ -272,25 +325,19 @@ end
 ---@return boolean
 local function createJunction(src, dest)
 	-- Junctions require an absolute target path
-	local absTarget = getFullPath(src)
+	local absTarget, absLength = getFullPath(src)
 	if not absTarget then
 		return false
 	end
 
 	-- Create the junction directory
-	if kernel32.CreateDirectoryA(dest, nil) == 0 then
+	local destW = wide(dest)
+	if kernel32.CreateDirectoryW(destW, nil) == 0 then
 		return false
 	end
 
-	-- Build the NT path: \??\C:\path\to\target
-	local ntTarget = "\\??\\" .. absTarget
-
-	-- Encode the target as UTF-16LE
-	local ntTargetW = {} ---@type string[]
-	for i = 1, #ntTarget do
-		ntTargetW[#ntTargetW + 1] = string.sub(ntTarget, i, i) .. "\0"
-	end
-	local targetBytes = table.concat(ntTargetW)
+	-- Build the NT path as UTF-16LE: \??\C:\path\to\target
+	local targetBytes = "\\\0?\0?\0\\\0" .. ffi.string(absTarget, absLength * 2)
 	local targetByteLen = #targetBytes
 
 	-- Build REPARSE_DATA_BUFFER for mount point (junction)
@@ -334,8 +381,8 @@ local function createJunction(src, dest)
 
 	-- Open the junction directory with reparse point access
 	---@type HANDLE
-	local handle = kernel32.CreateFileA(
-		dest,
+	local handle = kernel32.CreateFileW(
+		destW,
 		GENERIC_WRITE,
 		0,
 		nil,
@@ -345,7 +392,7 @@ local function createJunction(src, dest)
 	)
 
 	if handle == INVALID_HANDLE_VALUE then
-		kernel32.RemoveDirectoryA(dest)
+		kernel32.RemoveDirectoryW(destW)
 		return false
 	end
 
@@ -364,7 +411,7 @@ local function createJunction(src, dest)
 	kernel32.CloseHandle(handle)
 
 	if ok == 0 then
-		kernel32.RemoveDirectoryA(dest)
+		kernel32.RemoveDirectoryW(destW)
 		return false
 	end
 
@@ -377,9 +424,9 @@ end
 function fs.rmlink(p)
 	local attrs = getFileAttrs(p)
 	if attrs ~= nil and bit.band(attrs, FILE_ATTRIBUTE_DIRECTORY) ~= 0 then
-		return kernel32.RemoveDirectoryA(p) ~= 0
+		return kernel32.RemoveDirectoryW(wide(p)) ~= 0
 	end
-	return kernel32.DeleteFileA(p) ~= 0
+	return kernel32.DeleteFileW(wide(p)) ~= 0
 end
 
 ---@param src string
@@ -389,10 +436,11 @@ function fs.mklink(src, dest)
 		return createJunction(src, dest)
 	end
 
-	if kernel32.CreateSymbolicLinkA(dest, src, 0x2) ~= 0 then
+	local srcW, destW = wide(src), wide(dest)
+	if kernel32.CreateSymbolicLinkW(destW, srcW, 0x2) ~= 0 then
 		return true
 	end
-	return kernel32.CreateHardLinkA(dest, src, nil) ~= 0
+	return kernel32.CreateHardLinkW(destW, srcW, nil) ~= 0
 end
 
 ---@param p string
@@ -464,7 +512,7 @@ function fs.stat(p)
 		return nil
 	end
 	local data = newFileAttrData()
-	if kernel32.GetFileAttributesExA(p, 0, data) == 0 then
+	if kernel32.GetFileAttributesExW(wide(p), 0, data) == 0 then
 		return nil
 	end
 
@@ -476,7 +524,7 @@ end
 ---@return fs.Stat?
 function fs.lstat(p)
 	local data = newFileAttrData()
-	if kernel32.GetFileAttributesExA(p, 0, data) == 0 then
+	if kernel32.GetFileAttributesExW(wide(p), 0, data) == 0 then
 		return nil
 	end
 
@@ -532,8 +580,8 @@ local WAIT_OBJECT_0 = 0
 function fs.watch(p, callback, opts)
 	local recursive = opts and opts.recursive or false
 
-	local handle = kernel32.CreateFileA(
-		p,
+	local handle = kernel32.CreateFileW(
+		wide(p),
 		FILE_LIST_DIRECTORY,
 		bit.bor(FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE),
 		nil,
@@ -593,11 +641,7 @@ function fs.watch(p, callback, opts)
 			local nextOff = ffi.cast("uint32_t*", ptr)[0]
 			local action  = ffi.cast("uint32_t*", ptr + 4)[0]
 			local nameLen = ffi.cast("uint32_t*", ptr + 8)[0]
-			local name    = ""
-			for j = 0, nameLen / 2 - 1 do
-				local ch = ffi.cast("uint16_t*", ptr + 12)[j]
-				name = name .. string.char(ch < 128 and ch or 63)
-			end
+			local name    = narrow(ffi.cast("WCHAR*", ptr + 12), nameLen / 2)
 
 			local ev ---@type fs.WatchEvent
 			if action == FILE_ACTION_ADDED then

@@ -174,6 +174,84 @@ test.it("readdir returns nil for missing directory", function()
 	test.falsy(fs.readdir(tmp("no-dir")))
 end)
 
+-- Names outside ASCII, and outside any single Windows code page: Latin, CJK and an emoji beyond
+-- the Basic Multilingual Plane, which UTF-16 spells as a surrogate pair.
+local unicodeName = "Ant\195\180nio \230\151\165\230\156\172 \240\159\142\181"
+
+-- The same name as Windows stores it. A file made through fs alone would pass even with the
+-- narrow calls: they misread the UTF-8 the same way going in and coming out. One made by the wide
+-- call is the file Explorer or a download leaves behind.
+local unicodeNameW = table.concat({
+	"A\0n\0t\0\244\0n\0i\0o\0 \0", -- "Antônio "
+	"\229\101\44\103 \0", -- U+65E5 U+672C, then a space
+	"\60\216\181\223", -- U+1F3B5 as the surrogates D83C DFB5
+	".\0t\0x\0t\0\0\0",
+})
+
+--- Creates `dir`/<unicodeName>.txt through CreateFileW, holding `content`.
+---@param dir string
+---@param content string
+local function createWide(dir, content)
+	local ffi = require("ffi")
+	local kernel32 = ffi.load("kernel32")
+	pcall(ffi.cdef, [[ int WriteFile(void* hFile, const void* lpBuffer, uint32_t nNumberOfBytesToWrite,
+		uint32_t* lpNumberOfBytesWritten, void* lpOverlapped); ]])
+	local dirW = {}
+	for at = 1, #dir do dirW[at] = dir:sub(at, at) .. "\0" end
+	local full = table.concat(dirW) .. "\\\0" .. unicodeNameW
+	local GENERIC_WRITE, CREATE_ALWAYS = 0x40000000, 2
+	local handle = kernel32.CreateFileW(ffi.cast("const uint16_t*", full), GENERIC_WRITE, 0, nil, CREATE_ALWAYS, 0, nil)
+	assert(handle ~= ffi.cast("void*", -1), "CreateFileW failed")
+	kernel32.WriteFile(handle, content, #content, ffi.new("uint32_t[1]"), nil)
+	kernel32.CloseHandle(handle)
+end
+
+test.skipIf(jit.os ~= "Windows")("readdir hands back a name Windows stores as UTF-8", function()
+	local d = tmp("readdir-unicode")
+	fs.rmdir(d)
+	fs.mkdir(d)
+	createWide(d, "tone")
+
+	local iter = assert(fs.readdir(d))
+	local entry = assert(iter())
+	test.equal(entry.name, unicodeName .. ".txt")
+	test.equal(entry.type, "file")
+	test.equal(iter(), nil)
+	fs.rmdir(d)
+end)
+
+test.skipIf(jit.os ~= "Windows")("every call and io.open take the UTF-8 path a listing hands back", function()
+	local d = tmp("unicode-ops")
+	fs.rmdir(d)
+	fs.mkdir(d)
+	createWide(d, "tone")
+
+	local file = path.join(d, unicodeName .. ".txt")
+	test.truthy(fs.exists(file))
+	test.truthy(fs.isfile(file))
+	test.equal(fs.read(file), "tone", "io.open opens it too")
+	test.equal(assert(fs.stat(file)).size, 4)
+
+	local sub = path.join(d, unicodeName)
+	test.truthy(fs.mkdir(sub))
+	test.truthy(fs.isdir(sub))
+
+	local copied = path.join(sub, unicodeName .. " copy.txt")
+	test.truthy(fs.copy(file, copied))
+	test.equal(fs.read(copied), "tone")
+
+	local moved = path.join(sub, unicodeName .. " moved.txt")
+	test.truthy(fs.move(copied, moved))
+	test.falsy(fs.exists(copied))
+	test.equal(fs.read(moved), "tone")
+
+	test.truthy(fs.delete(moved))
+	test.falsy(fs.exists(moved))
+	test.truthy(fs.delete(file))
+	test.truthy(fs.rmdir(d))
+	test.falsy(fs.exists(d))
+end)
+
 --
 -- symlinks
 --
@@ -309,6 +387,23 @@ test.it("watch detects file creation via poll", function()
 	w.close()
 	test.truthy(#events > 0)
 	test.equal(events[1].event, "create")
+end)
+
+test.it("watch reports a non-ASCII name as UTF-8", function()
+	local d = tmp("watch-unicode")
+	fs.mkdir(d)
+
+	local names = {}
+	local w = assert(fs.watch(d, function(_, name) names[#names + 1] = name end))
+	fs.write(path.join(d, unicodeName .. ".txt"), "hello")
+
+	local deadline = os.clock() + 1
+	while #names == 0 and os.clock() < deadline do
+		w.poll()
+	end
+
+	w.close()
+	test.equal(names[1], unicodeName .. ".txt")
 end)
 
 test.it("watch detects file modification via poll", function()
