@@ -247,6 +247,7 @@ local sep = string.sub(package.config, 1, 1)
 function fs.globToPattern(glob)
 	local pattern = glob
 		:gsub("([%^%$%(%)%%%.%[%]%+%-])", "%%%1")
+		:gsub("[/\\]", "[/\\]")
 		:gsub("%*%*", "\001")
 		:gsub("%*", "[^/\\]*")
 		:gsub("%?", "[^/\\]")
